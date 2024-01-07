@@ -35,10 +35,10 @@ impl TryFrom<&str> for ConnectionInfo {
 fn parse_ipv4(text: &str) -> Result<Ipv4Addr, AddrParseError> {
     let text = format!(
         "{}.{}.{}.{}",
-        u8::from_str_radix(&text[0..2], 16).unwrap(),
-        u8::from_str_radix(&text[2..4], 16).unwrap(),
+        u8::from_str_radix(&text[6..8], 16).unwrap(),
         u8::from_str_radix(&text[4..6], 16).unwrap(),
-        u8::from_str_radix(&text[6..8], 16).unwrap()
+        u8::from_str_radix(&text[2..4], 16).unwrap(),
+        u8::from_str_radix(&text[0..2], 16).unwrap(),
     );
 
     text.parse::<Ipv4Addr>()
