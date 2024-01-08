@@ -12,6 +12,8 @@ use std::{
     time::Duration,
 };
 
+const MAX_VISIBILITY_COUNT: u32 = 1;
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -34,22 +36,35 @@ enum Commands {
     },
 }
 
+struct Connection {
+    pub address: Ipv4Addr,
+    pub visibility_count: u32,
+    pub is_in_routing_table: bool,
+}
+
 fn main() {
     let cli = Cli::parse();
 
-    let remote_addresses = Arc::new(Mutex::new(vec![]));
+    let connections: Arc<Mutex<Vec<Connection>>> = Default::default();
 
     // Handle application termination.
     {
-        let remote_addresses = remote_addresses.clone();
+        let connections = connections.clone();
         ctrlc::set_handler(move || {
             println!("Shutting down...");
 
-            let remote_addresses = remote_addresses.lock().unwrap();
-            for address in remote_addresses.iter() {
-                println!("Removing address {} from routing table...", address);
+            let connections = connections.lock().unwrap();
+            for connection in connections.iter() {
+                if !connection.is_in_routing_table {
+                    continue;
+                }
 
-                remove_ip_from_routing_table(address);
+                println!(
+                    "Removing address {} from routing table...",
+                    connection.address
+                );
+
+                remove_ip_from_routing_table(&connection.address);
             }
 
             std::process::exit(0);
@@ -64,36 +79,56 @@ fn main() {
             todo!()
         }
         Commands::Attach { pid } => {
-            monitor_process(pid, remote_addresses);
+            monitor_process(pid, connections);
         }
     }
 }
 
-fn monitor_process(pid: isize, remote_addresses: Arc<Mutex<Vec<Ipv4Addr>>>) {
+fn monitor_process(pid: isize, connections: Arc<Mutex<Vec<Connection>>>) {
     loop {
-        let connections_pending = {
-            let mut connections_pending = find_ipv4_pending_connections_from_pid(pid);
+        {
+            let connections_pending = find_ipv4_pending_connections_from_pid(pid);
 
-            let mut remote_addresses = remote_addresses
+            let mut connections = connections
                 .lock()
-                .expect("Unable to lock for write remote addresses");
+                .expect("Unable to lock for write remote connections");
 
-            // Filter out addresses already present in the routing table.
-            connections_pending.retain(|address| !remote_addresses.contains(address));
-
-            // Store the remote addresses to later remove from routing table.
+            // Update count of known peding connections.
             for address in &connections_pending {
-                remote_addresses.push(address.clone());
+                if let Some(connection) = connections
+                    .iter_mut()
+                    .find(|connection| connection.address == *address)
+                {
+                    if !connection.is_in_routing_table {
+                        connection.visibility_count += 1;
+
+                        println!(
+                            "Address {} visibility has been bumped to {}.",
+                            connection.address, connection.visibility_count
+                        );
+                    }
+                } else {
+                    connections.push(Connection {
+                        address: *address,
+                        visibility_count: 0,
+                        is_in_routing_table: false,
+                    });
+                }
             }
 
-            connections_pending
-        };
+            // Find connections to add to the routing table.
+            for connection in connections.iter_mut() {
+                if connection.is_in_routing_table
+                    || connection.visibility_count < MAX_VISIBILITY_COUNT
+                {
+                    continue;
+                }
 
-        // Add all remote addresses to the routing table.
-        for address in &connections_pending {
-            println!("Adding address {:?} to routing table.", address);
+                println!("Adding {} to routing table...", connection.address);
+                add_ip_to_routing_table(&connection.address);
 
-            add_ip_to_routing_table(address);
+                connection.is_in_routing_table = true;
+            }
         }
 
         sleep(Duration::from_secs(1));
@@ -103,7 +138,7 @@ fn monitor_process(pid: isize, remote_addresses: Arc<Mutex<Vec<Ipv4Addr>>>) {
 fn find_ipv4_pending_connections_from_pid(pid: isize) -> Vec<Ipv4Addr> {
     let tcp_file = std::fs::read_to_string(format!("/proc/{}/net/tcp", pid)).unwrap();
 
-    tcp_file
+    let mut addresses = tcp_file
         .lines()
         .skip(1)
         .filter_map(|line| {
@@ -114,7 +149,11 @@ fn find_ipv4_pending_connections_from_pid(pid: isize) -> Vec<Ipv4Addr> {
                 None
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    addresses.dedup();
+
+    addresses
 }
 
 fn add_ip_to_routing_table(ip: &Ipv4Addr) {
