@@ -17,6 +17,14 @@ const MAX_VISIBILITY_COUNT: u32 = 1;
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
+    #[arg(
+        short,
+        long,
+        default_value_t = 1000,
+        help = "Number of milisenconds between connection check"
+    )]
+    pooling_rate: u64,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -44,6 +52,7 @@ struct Connection {
 
 fn main() {
     let cli = Cli::parse();
+    let pooling_rate = Duration::from_millis(cli.pooling_rate);
 
     let connections: Arc<Mutex<Vec<Connection>>> = Default::default();
 
@@ -79,12 +88,12 @@ fn main() {
             todo!()
         }
         Commands::Attach { pid } => {
-            monitor_process(pid, connections);
+            monitor_process(pid, connections, pooling_rate);
         }
     }
 }
 
-fn monitor_process(pid: isize, connections: Arc<Mutex<Vec<Connection>>>) {
+fn monitor_process(pid: isize, connections: Arc<Mutex<Vec<Connection>>>, pooling_rate: Duration) {
     loop {
         {
             let connections_pending = find_ipv4_pending_connections_from_pid(pid);
@@ -131,7 +140,7 @@ fn monitor_process(pid: isize, connections: Arc<Mutex<Vec<Connection>>>) {
             }
         }
 
-        sleep(Duration::from_secs(1));
+        sleep(pooling_rate);
     }
 }
 
