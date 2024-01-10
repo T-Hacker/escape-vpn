@@ -9,10 +9,8 @@ use std::{
     process::Command,
     sync::{Arc, Mutex},
     thread::sleep,
-    time::Duration,
+    time::{Duration, Instant},
 };
-
-const MAX_VISIBILITY_COUNT: u32 = 1;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -24,6 +22,14 @@ struct Cli {
         help = "Number of milisenconds between connection check"
     )]
     pooling_rate: u64,
+
+    #[arg(
+        short,
+        long,
+        default_value_t = 5000,
+        help = "Number of milisenconds that a connection must be waiting before is added to the routing table"
+    )]
+    delay: u64,
 
     #[command(subcommand)]
     command: Commands,
@@ -46,13 +52,14 @@ enum Commands {
 
 struct Connection {
     pub address: Ipv4Addr,
-    pub visibility_count: u32,
+    pub creation_time: Instant,
     pub is_in_routing_table: bool,
 }
 
 fn main() {
     let cli = Cli::parse();
     let pooling_rate = Duration::from_millis(cli.pooling_rate);
+    let delay = Duration::from_millis(cli.delay);
 
     let connections: Arc<Mutex<Vec<Connection>>> = Default::default();
 
@@ -88,12 +95,17 @@ fn main() {
             todo!()
         }
         Commands::Attach { pid } => {
-            monitor_process(pid, connections, pooling_rate);
+            monitor_process(pid, connections, pooling_rate, delay);
         }
     }
 }
 
-fn monitor_process(pid: isize, connections: Arc<Mutex<Vec<Connection>>>, pooling_rate: Duration) {
+fn monitor_process(
+    pid: isize,
+    connections: Arc<Mutex<Vec<Connection>>>,
+    pooling_rate: Duration,
+    delay: Duration,
+) {
     loop {
         {
             let connections_pending = find_ipv4_pending_connections_from_pid(pid);
@@ -102,24 +114,22 @@ fn monitor_process(pid: isize, connections: Arc<Mutex<Vec<Connection>>>, pooling
                 .lock()
                 .expect("Unable to lock for write remote connections");
 
-            // Update count of known peding connections.
-            for address in &connections_pending {
-                if let Some(connection) = connections
-                    .iter_mut()
-                    .find(|connection| connection.address == *address)
-                {
-                    if !connection.is_in_routing_table {
-                        connection.visibility_count += 1;
+            // Remove connections that are no longer pending.
+            connections.retain(|connection| {
+                connection.is_in_routing_table || connections_pending.contains(&connection.address)
+            });
 
-                        println!(
-                            "Address {} visibility has been bumped to {}.",
-                            connection.address, connection.visibility_count
-                        );
-                    }
-                } else {
+            // Add new connections.
+            let current_time = Instant::now();
+            for address in &connections_pending {
+                if connections
+                    .iter()
+                    .find(|connection| connection.address == *address)
+                    .is_none()
+                {
                     connections.push(Connection {
                         address: *address,
-                        visibility_count: 0,
+                        creation_time: current_time,
                         is_in_routing_table: false,
                     });
                 }
@@ -127,9 +137,12 @@ fn monitor_process(pid: isize, connections: Arc<Mutex<Vec<Connection>>>, pooling
 
             // Find connections to add to the routing table.
             for connection in connections.iter_mut() {
-                if connection.is_in_routing_table
-                    || connection.visibility_count < MAX_VISIBILITY_COUNT
-                {
+                if connection.is_in_routing_table {
+                    continue;
+                }
+
+                let elapsed_time = connection.creation_time.elapsed();
+                if elapsed_time < delay {
                     continue;
                 }
 
