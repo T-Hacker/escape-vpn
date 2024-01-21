@@ -46,7 +46,7 @@ enum Commands {
     #[command(about = "Attach to a running process")]
     Attach {
         #[arg(required = true, help = "PID of the process to attach to.")]
-        pid: isize,
+        pid: u32,
     },
 }
 
@@ -88,24 +88,31 @@ fn main() {
         .unwrap();
     }
 
-    match cli.command {
+    let pid = match cli.command {
         Commands::Launch { command } => {
-            println!("Launching command: {:?}", command);
+            let mut command = command.iter();
+            let executable = command.next().expect("Executable name");
 
-            todo!()
+            let output = std::process::Command::new(executable)
+                .args(command)
+                .spawn()
+                .expect("Fail to launch process");
+
+            output.id()
         }
-        Commands::Attach { pid } => {
-            monitor_process(pid, connections, pooling_rate, delay);
-        }
-    }
+        Commands::Attach { pid } => pid,
+    };
+    monitor_process(pid, connections, pooling_rate, delay);
 }
 
 fn monitor_process(
-    pid: isize,
+    pid: u32,
     connections: Arc<Mutex<Vec<Connection>>>,
     pooling_rate: Duration,
     delay: Duration,
 ) {
+    println!("Start monitoring process: {pid}");
+
     loop {
         {
             let connections_pending = find_ipv4_pending_connections_from_pid(pid);
@@ -157,7 +164,7 @@ fn monitor_process(
     }
 }
 
-fn find_ipv4_pending_connections_from_pid(pid: isize) -> Vec<Ipv4Addr> {
+fn find_ipv4_pending_connections_from_pid(pid: u32) -> Vec<Ipv4Addr> {
     let tcp_file = std::fs::read_to_string(format!("/proc/{}/net/tcp", pid)).unwrap();
 
     let mut addresses = tcp_file
