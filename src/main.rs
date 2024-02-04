@@ -1,36 +1,22 @@
+mod client;
 mod connection_info;
 mod connection_status;
+mod service;
 
 use clap::{Parser, Subcommand};
+use client::{attach, launch};
 use connection_info::ConnectionInfo;
 use connection_status::TcpConnectionStatus;
+use service::service;
 use std::{
     net::Ipv4Addr,
     process::Command,
-    sync::{Arc, Mutex},
-    thread::sleep,
     time::{Duration, Instant},
 };
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    #[arg(
-        short,
-        long,
-        default_value_t = 1000,
-        help = "Number of milisenconds between connection check"
-    )]
-    pooling_rate: u64,
-
-    #[arg(
-        short,
-        long,
-        default_value_t = 5000,
-        help = "Number of milisenconds that a connection must be waiting before is added to the routing table"
-    )]
-    delay: u64,
-
     #[command(subcommand)]
     command: Commands,
 }
@@ -48,6 +34,25 @@ enum Commands {
         #[arg(required = true, help = "PID of the process to attach to.")]
         pid: u32,
     },
+
+    #[command(about = "Launch application as a service")]
+    Service {
+        #[arg(
+            short,
+            long,
+            default_value_t = 1000,
+            help = "Number of milisenconds between connection check."
+        )]
+        pooling_rate: u64,
+
+        #[arg(
+            short,
+            long,
+            default_value_t = 30000,
+            help = "Number of milisenconds that a connection must be waiting before is added to the routing table."
+        )]
+        delay: u64,
+    },
 }
 
 struct Connection {
@@ -58,109 +63,19 @@ struct Connection {
 
 fn main() {
     let cli = Cli::parse();
-    let pooling_rate = Duration::from_millis(cli.pooling_rate);
-    let delay = Duration::from_millis(cli.delay);
 
-    let connections: Arc<Mutex<Vec<Connection>>> = Default::default();
+    match cli.command {
+        Commands::Launch { command } => launch(&command),
+        Commands::Attach { pid } => attach(pid),
+        Commands::Service {
+            pooling_rate,
+            delay,
+        } => {
+            let pooling_rate = Duration::from_millis(pooling_rate);
+            let delay = Duration::from_millis(delay);
 
-    // Handle application termination.
-    {
-        let connections = connections.clone();
-        ctrlc::set_handler(move || {
-            println!("Shutting down...");
-
-            let connections = connections.lock().unwrap();
-            for connection in connections.iter() {
-                if !connection.is_in_routing_table {
-                    continue;
-                }
-
-                println!(
-                    "Removing address {} from routing table...",
-                    connection.address
-                );
-
-                remove_ip_from_routing_table(&connection.address);
-            }
-
-            std::process::exit(0);
-        })
-        .unwrap();
-    }
-
-    let pid = match cli.command {
-        Commands::Launch { command } => {
-            let mut command = command.iter();
-            let executable = command.next().expect("Executable name");
-
-            let output = std::process::Command::new(executable)
-                .args(command)
-                .spawn()
-                .expect("Fail to launch process");
-
-            output.id()
+            service(pooling_rate, delay);
         }
-        Commands::Attach { pid } => pid,
-    };
-    monitor_process(pid, connections, pooling_rate, delay);
-}
-
-fn monitor_process(
-    pid: u32,
-    connections: Arc<Mutex<Vec<Connection>>>,
-    pooling_rate: Duration,
-    delay: Duration,
-) {
-    println!("Start monitoring process: {pid}");
-
-    loop {
-        {
-            let connections_pending = find_ipv4_pending_connections_from_pid(pid);
-
-            let mut connections = connections
-                .lock()
-                .expect("Unable to lock for write remote connections");
-
-            // Remove connections that are no longer pending.
-            connections.retain(|connection| {
-                connection.is_in_routing_table || connections_pending.contains(&connection.address)
-            });
-
-            // Add new connections.
-            let current_time = Instant::now();
-            for address in &connections_pending {
-                if connections
-                    .iter()
-                    .find(|connection| connection.address == *address)
-                    .is_none()
-                {
-                    connections.push(Connection {
-                        address: *address,
-                        creation_time: current_time,
-                        is_in_routing_table: false,
-                    });
-                }
-            }
-
-            // Find connections to add to the routing table.
-            for connection in connections.iter_mut() {
-                if connection.is_in_routing_table {
-                    continue;
-                }
-
-                let elapsed_time = connection.creation_time.elapsed();
-                if elapsed_time < delay {
-                    continue;
-                }
-
-                println!("Adding {} to routing table...", connection.address);
-                add_ip_to_routing_table(&connection.address);
-
-                connection.is_in_routing_table = true;
-            }
-        }
-
-        sleep(pooling_rate);
     }
 }
 
