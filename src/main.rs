@@ -1,18 +1,15 @@
 mod client;
 mod connection_info;
 mod connection_status;
+mod messages;
+mod process_manager;
 mod service;
 
 use clap::{Parser, Subcommand};
-use client::{attach, launch};
-use connection_info::ConnectionInfo;
-use connection_status::TcpConnectionStatus;
+use client::{attach, detach_from_process, launch};
 use service::service;
-use std::{
-    net::Ipv4Addr,
-    process::Command,
-    time::{Duration, Instant},
-};
+use simple_logger::SimpleLogger;
+use std::{path::PathBuf, time::Duration};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -27,23 +24,6 @@ enum Commands {
     Launch {
         #[arg(required = true, help = "Command to execute and track connections.")]
         command: Vec<String>,
-    },
-
-    #[command(about = "Attach to a running process")]
-    Attach {
-        #[arg(required = true, help = "PID of the process to attach to.")]
-        pid: u32,
-    },
-
-    #[command(about = "Launch application as a service")]
-    Service {
-        #[arg(
-            short,
-            long,
-            default_value_t = 1000,
-            help = "Number of milisenconds between connection check."
-        )]
-        pooling_rate: u64,
 
         #[arg(
             short,
@@ -51,67 +31,77 @@ enum Commands {
             default_value_t = 30000,
             help = "Number of milisenconds that a connection must be waiting before is added to the routing table."
         )]
-        delay: u64,
+        delay: u32,
+    },
+
+    #[command(about = "Attach to a running process")]
+    Attach {
+        #[arg(required = true, help = "PID of the process to attach to.")]
+        pid: u32,
+
+        #[arg(
+            short,
+            long,
+            default_value_t = 30000,
+            help = "Number of milisenconds that a connection must be waiting before is added to the routing table."
+        )]
+        delay: u32,
+    },
+
+    #[command(about = "Detach to a running process")]
+    Detach {
+        #[arg(required = true, help = "PID of the process to detach from.")]
+        pid: u32,
+    },
+
+    #[command(about = "Launch application as a service")]
+    Service {
+        #[arg(default_value = "127.0.0.1:3131", help = "Listening port.")]
+        address: String,
+
+        #[arg(
+            short,
+            long,
+            default_value_t = 1000,
+            help = "Number of milisenconds between connection check."
+        )]
+        pooling_rate: u32,
     },
 }
 
-struct Connection {
-    pub address: Ipv4Addr,
-    pub creation_time: Instant,
-    pub is_in_routing_table: bool,
-}
-
 fn main() {
+    SimpleLogger::new()
+        .init()
+        .expect("Fail to initialize logger");
+
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Launch { command } => launch(&command),
-        Commands::Attach { pid } => attach(pid),
-        Commands::Service {
-            pooling_rate,
-            delay,
-        } => {
-            let pooling_rate = Duration::from_millis(pooling_rate);
-            let delay = Duration::from_millis(delay);
+        Commands::Launch { command, delay } => {
+            let delay = Duration::from_millis(delay as u64);
 
-            service(pooling_rate, delay);
+            launch(&command, delay);
+        }
+        Commands::Attach { pid, delay } => {
+            let delay = Duration::from_millis(delay as u64);
+
+            attach(pid, delay);
+        }
+        Commands::Detach { pid } => detach_from_process(pid),
+        Commands::Service {
+            address,
+            pooling_rate,
+        } => {
+            let pooling_rate = Duration::from_millis(pooling_rate as u64);
+
+            service(&address, pooling_rate);
         }
     }
 }
 
-fn find_ipv4_pending_connections_from_pid(pid: u32) -> Vec<Ipv4Addr> {
-    let tcp_file = std::fs::read_to_string(format!("/proc/{}/net/tcp", pid)).unwrap();
+fn get_service_address_file() -> PathBuf {
+    let temp_dir = std::env::temp_dir();
+    let exe_name = env!("CARGO_PKG_NAME");
 
-    let mut addresses = tcp_file
-        .lines()
-        .skip(1)
-        .filter_map(|line| {
-            let connection_info: ConnectionInfo = line.try_into().unwrap();
-            if connection_info.status == TcpConnectionStatus::SynSent {
-                Some(connection_info.remote_address.into())
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-
-    addresses.dedup();
-
-    addresses
-}
-
-fn add_ip_to_routing_table(ip: &Ipv4Addr) {
-    Command::new("ip")
-        .args(["route", "add", &format!("{}/32", ip), "via", "192.168.1.1"])
-        .spawn()
-        .unwrap();
-}
-
-fn remove_ip_from_routing_table(ip: &Ipv4Addr) {
-    let ip = ip.to_string();
-
-    Command::new("ip")
-        .args(["route", "del", &ip])
-        .spawn()
-        .expect("Fail to remove IP from routing table.");
+    temp_dir.join(format!("{exe_name}.port"))
 }

@@ -1,7 +1,10 @@
-use crate::service;
-use std::{fs::OpenOptions, io::Write, process::Command};
+use crate::{
+    get_service_address_file,
+    messages::{deserialize_from, serialize_to, AttachError, DetachError, Message},
+};
+use std::{io::Write, net::TcpStream, process::Command, time::Duration};
 
-pub fn launch(command: &[String]) {
+pub fn launch(command: &[String], delay: Duration) {
     let mut command = command.iter();
     let executable = command.next().expect("Executable name");
 
@@ -12,23 +15,58 @@ pub fn launch(command: &[String]) {
 
     let pid = output.id();
 
-    attach(pid);
+    attach(pid, delay);
 }
 
-pub fn attach(pid: u32) {
-    // Create message to send to service.
-    let msg = service::AttachMessage::new(pid);
-    let msg = bincode::serialize(&msg).expect("Fail to serialize message to send to service");
+pub fn attach(pid: u32, delay: Duration) {
+    let mut stream = connect_to_service();
 
     // Send message to service.
-    let mut pipe = OpenOptions::new()
-        .write(true)
-        .open("/var/run/escape-vpn/escape-vpn-service.pipe")
-        .expect("Fail to open named pipe");
+    let msg = Message::AttachRequest {
+        pid,
+        delay: delay.as_millis() as u32,
+    };
+    serialize_to(&msg, &stream).expect("Fail to send message to service");
+    stream.flush().expect("Fail to flush pipe");
 
-    println!("Pipe opened.");
+    // Receive response from service.
+    match deserialize_from::<Message, _>(stream).expect("Fail to read response message") {
+        Message::AttachResponse { error } => match error {
+            AttachError::Ok => { /* Do nothing. */ }
+            AttachError::ProcessNotFound => println!("Process not found."),
+        },
 
-    pipe.write_all(&msg)
-        .expect("Fail to send message to service");
-    pipe.flush().expect("Fail to flush pipe");
+        _ => panic!("Unexpected message received!"),
+    }
+}
+
+pub fn detach_from_process(pid: u32) {
+    let mut stream = connect_to_service();
+
+    // Send message to service.
+    let msg = Message::DetachRequest { pid };
+    serialize_to(&msg, &stream).expect("Fail to send message to service");
+    stream.flush().expect("Fail to flush pipe");
+
+    // Receive response from service.
+    let msg: Message = deserialize_from(stream).expect("Fail to read response message");
+    match msg {
+        Message::DetachResponse { error } => match error {
+            DetachError::Ok => { /* Do nothing. */ }
+            DetachError::ProcessNotFound => println!("Process not found!"),
+        },
+
+        _ => panic!("Unexpected message received!"),
+    }
+}
+
+fn connect_to_service() -> TcpStream {
+    // Find port of the service to connect to.
+    let port_file_name = get_service_address_file();
+    let port = std::fs::read_to_string(port_file_name).unwrap();
+    let port = u16::from_str_radix(&port, 10).unwrap();
+    let service_address = format!("127.0.0.1:{port}");
+
+    // Connect to service.
+    TcpStream::connect(service_address).unwrap()
 }
