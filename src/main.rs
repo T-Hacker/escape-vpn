@@ -1,6 +1,5 @@
 mod client;
-mod connection_info;
-mod connection_status;
+mod connections;
 mod messages;
 mod process_manager;
 mod service;

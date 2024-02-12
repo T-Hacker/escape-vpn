@@ -2,7 +2,7 @@ use crate::connection_status::TcpConnectionStatus;
 use std::net::{AddrParseError, Ipv4Addr};
 
 #[derive(Debug)]
-pub struct ConnectionInfo {
+pub struct TcpConnectionInfo {
     pub remote_address: Ipv4Addr,
     pub status: TcpConnectionStatus,
 }
@@ -10,7 +10,7 @@ pub struct ConnectionInfo {
 #[derive(Debug)]
 pub struct ParseConnectionInfoError;
 
-impl TryFrom<&str> for ConnectionInfo {
+impl TryFrom<&str> for TcpConnectionInfo {
     type Error = ParseConnectionInfoError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
@@ -25,7 +25,7 @@ impl TryFrom<&str> for ConnectionInfo {
             .try_into()
             .map_err(|_| ParseConnectionInfoError)?;
 
-        Ok(ConnectionInfo {
+        Ok(TcpConnectionInfo {
             remote_address,
             status,
         })

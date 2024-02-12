@@ -1,6 +1,9 @@
 use crate::{
-    connection_info::ConnectionInfo,
-    connection_status::TcpConnectionStatus,
+    connections::{
+        get_connection_mananger,
+        tcp::{TcpConnectionInfo, TcpConnectionStatus},
+        Connection,
+    },
     get_service_address_file,
     messages::{deserialize_from, serialize_to, AttachError, Message},
     process_manager::{add_process, remove_process_and_trigger_exit},
@@ -9,18 +12,9 @@ use color_eyre::eyre::Result;
 use std::{
     net::{Ipv4Addr, TcpListener, TcpStream},
     process::Command,
-    sync::{
-        mpsc::{channel, Receiver, TryRecvError},
-        Arc, Mutex,
-    },
+    sync::mpsc::{channel, Receiver, TryRecvError},
     time::{Duration, Instant},
 };
-
-struct Connection {
-    pub address: Ipv4Addr,
-    pub creation_time: Instant,
-    pub is_in_routing_table: bool,
-}
 
 pub fn service(address: &str, pooling_rate: Duration) {
     // Register service port.
@@ -37,7 +31,6 @@ pub fn service(address: &str, pooling_rate: Duration) {
     let listener = TcpListener::bind(address).expect("Fail to listen in address: {address}");
 
     // Handle client requests.
-    let connections = Arc::new(Mutex::new(Vec::new()));
     for stream in listener.incoming() {
         let stream = match stream {
             Ok(stream) => stream,
@@ -51,9 +44,7 @@ pub fn service(address: &str, pooling_rate: Duration) {
 
         // Decode request message.
         match deserialize_from::<Message, _>(&stream) {
-            Ok(Message::AttachRequest { pid, delay }) => {
-                attach(pid, delay, pooling_rate, connections.clone(), stream)
-            }
+            Ok(Message::AttachRequest { pid, delay }) => attach(pid, delay, pooling_rate, stream),
             Ok(Message::DetachRequest { pid }) => detach(pid),
 
             Ok(_) => {
@@ -71,22 +62,15 @@ pub fn service(address: &str, pooling_rate: Duration) {
     }
 }
 
-fn attach(
-    pid: u32,
-    delay: u32,
-    pooling_rate: Duration,
-    connections: Arc<Mutex<Vec<Connection>>>,
-    stream: TcpStream,
-) {
+fn attach(pid: u32, delay: u32, pooling_rate: Duration, stream: TcpStream) {
     log::info!("Attaching to PID: {} with delay of {} ms...", pid, delay);
 
     let (sender, receiver) = channel();
 
-    let connections = connections.clone();
     let join_handle = std::thread::spawn(move || {
         let delay = Duration::from_millis(delay as u64);
 
-        track_process(pid, connections, delay, pooling_rate, stream, receiver);
+        track_process(pid, delay, pooling_rate, stream, receiver);
     });
 
     if add_process(pid, join_handle, sender).is_err() {
@@ -107,7 +91,6 @@ fn detach(pid: u32) {
 
 fn track_process(
     pid: u32,
-    connections: Arc<Mutex<Vec<Connection>>>,
     delay: Duration,
     pooling_rate: Duration,
     stream: TcpStream,
@@ -139,10 +122,17 @@ fn track_process(
             };
 
             // Remove connections that are no longer pending.
-            let mut connections = connections.lock().expect("Fail to lock connections");
-            connections.retain(|connection: &Connection| {
-                connection.is_in_routing_table || connections_pending.contains(&connection.address)
-            });
+            {
+                let connection_manager = get_connection_mananger();
+                let connection_manager = connection_manager
+                    .lock()
+                    .expect("Fail to lock connection manager.");
+                let mut connections = connections.lock().expect("Fail to lock connections");
+                connections.retain(|connection: &Connection| {
+                    connection.is_in_routing_table
+                        || connections_pending.contains(&connection.address)
+                });
+            }
 
             // Add new connections.
             let current_time = Instant::now();
@@ -189,7 +179,7 @@ fn find_ipv4_pending_connections_from_pid(pid: u32) -> Result<Vec<Ipv4Addr>> {
         .lines()
         .skip(1)
         .filter_map(|line| {
-            let connection_info: ConnectionInfo = line.try_into().unwrap();
+            let connection_info: TcpConnectionInfo = line.try_into().unwrap();
             if connection_info.status == TcpConnectionStatus::SynSent {
                 Some(connection_info.remote_address.into())
             } else {
