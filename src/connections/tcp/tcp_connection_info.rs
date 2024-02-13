@@ -1,14 +1,21 @@
-use crate::connection_status::TcpConnectionStatus;
+use super::TcpConnectionStatus;
 use std::net::{AddrParseError, Ipv4Addr};
 
 #[derive(Debug)]
 pub struct TcpConnectionInfo {
-    pub remote_address: Ipv4Addr,
-    pub status: TcpConnectionStatus,
+    remote_address: Ipv4Addr,
+    status: TcpConnectionStatus,
 }
 
-#[derive(Debug)]
-pub struct ParseConnectionInfoError;
+impl TcpConnectionInfo {
+    pub fn remote_address(&self) -> &Ipv4Addr {
+        &self.remote_address
+    }
+
+    pub fn status(&self) -> &TcpConnectionStatus {
+        &self.status
+    }
+}
 
 impl TryFrom<&str> for TcpConnectionInfo {
     type Error = ParseConnectionInfoError;
@@ -32,6 +39,12 @@ impl TryFrom<&str> for TcpConnectionInfo {
     }
 }
 
+impl PartialEq for TcpConnectionInfo {
+    fn eq(&self, other: &TcpConnectionInfo) -> bool {
+        self.remote_address == other.remote_address && self.status == other.status
+    }
+}
+
 fn parse_ipv4(text: &str) -> Result<Ipv4Addr, AddrParseError> {
     let text = format!(
         "{}.{}.{}.{}",
@@ -43,3 +56,6 @@ fn parse_ipv4(text: &str) -> Result<Ipv4Addr, AddrParseError> {
 
     text.parse::<Ipv4Addr>()
 }
+
+#[derive(Debug)]
+pub struct ParseConnectionInfoError;

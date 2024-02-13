@@ -2,7 +2,7 @@ use crate::{
     connections::{
         get_connection_mananger,
         tcp::{TcpConnectionInfo, TcpConnectionStatus},
-        Connection,
+        Connection, ConnectionState,
     },
     get_service_address_file,
     messages::{deserialize_from, serialize_to, AttachError, Message},
@@ -106,7 +106,7 @@ fn track_process(
         }
 
         {
-            let connections_pending = match find_ipv4_pending_connections_from_pid(pid) {
+            let connections_pending = match get_ipv4_pending_connections_from_pid(pid) {
                 Ok(connections_pending) => {
                     log::info!("Successfuly attached to process: {pid}");
                     send_attach_response(AttachError::Ok, &stream);
@@ -121,50 +121,44 @@ fn track_process(
                 }
             };
 
-            // Remove connections that are no longer pending.
             {
+                // Lock connection manager.
                 let connection_manager = get_connection_mananger();
-                let connection_manager = connection_manager
-                    .lock()
-                    .expect("Fail to lock connection manager.");
-                let mut connections = connections.lock().expect("Fail to lock connections");
-                connections.retain(|connection: &Connection| {
-                    connection.is_in_routing_table
-                        || connections_pending.contains(&connection.address)
-                });
-            }
+                let Ok(mut connection_manager) = connection_manager.lock() else {
+                    log::error!("Fail to lock connection manager.");
 
-            // Add new connections.
-            let current_time = Instant::now();
-            for address in &connections_pending {
-                if connections
-                    .iter()
-                    .find(|connection| connection.address == *address)
-                    .is_none()
-                {
-                    connections.push(Connection {
-                        address: *address,
-                        creation_time: current_time,
-                        is_in_routing_table: false,
-                    });
-                }
-            }
+                    return;
+                };
 
-            // Find connections to add to the routing table.
-            for connection in connections.iter_mut() {
-                if connection.is_in_routing_table {
-                    continue;
+                // Add new connections.
+                for address in &connections_pending {
+                    if connection_manager.get_connection_mut(address).is_none() {
+                        connection_manager.add_connection(Connection::new(
+                            *address,
+                            ConnectionState::Pending {
+                                start_time: Instant::now(),
+                            },
+                        ));
+                    }
                 }
 
-                let elapsed_time = connection.creation_time.elapsed();
-                if elapsed_time < delay {
-                    continue;
+                // Find connections to add to the routing table.
+                for connection in connection_manager.iter_mut() {
+                    match connection.state() {
+                        ConnectionState::Pending { start_time } => {
+                            let elapsed = start_time.elapsed();
+                            if elapsed < delay {
+                                continue;
+                            }
+
+                            add_ip_to_routing_table(connection.address());
+                            log::info!("Address {} added to routing table.", connection.address());
+
+                            connection.set_state(ConnectionState::InRoutingTable);
+                        }
+                        ConnectionState::InRoutingTable => { /* Do nothing. */ }
+                    }
                 }
-
-                log::info!("Adding {} to routing table...", connection.address);
-                add_ip_to_routing_table(&connection.address);
-
-                connection.is_in_routing_table = true;
             }
         }
 
@@ -172,25 +166,35 @@ fn track_process(
     }
 }
 
-fn find_ipv4_pending_connections_from_pid(pid: u32) -> Result<Vec<Ipv4Addr>> {
-    let tcp_file = std::fs::read_to_string(format!("/proc/{}/net/tcp", pid))?;
+fn get_ipv4_pending_connections_from_pid(pid: u32) -> Result<Vec<Ipv4Addr>> {
+    let connections = get_ipv4_connection_info_from_pid(pid)?;
 
-    let mut addresses = tcp_file
-        .lines()
-        .skip(1)
-        .filter_map(|line| {
-            let connection_info: TcpConnectionInfo = line.try_into().unwrap();
-            if connection_info.status == TcpConnectionStatus::SynSent {
-                Some(connection_info.remote_address.into())
+    let connections = connections
+        .into_iter()
+        .filter_map(|connection| {
+            if connection.status() == &TcpConnectionStatus::SynSent {
+                Some(connection.remote_address().to_owned())
             } else {
                 None
             }
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    addresses.dedup();
+    Ok(connections)
+}
 
-    Ok(addresses)
+fn get_ipv4_connection_info_from_pid(pid: u32) -> Result<Vec<TcpConnectionInfo>> {
+    let tcp_file = std::fs::read_to_string(format!("/proc/{}/net/tcp", pid))?;
+
+    let mut connections: Vec<TcpConnectionInfo> = tcp_file
+        .lines()
+        .skip(1)
+        .map(|line| line.try_into().unwrap())
+        .collect();
+
+    connections.dedup();
+
+    Ok(connections)
 }
 
 fn add_ip_to_routing_table(ip: &Ipv4Addr) {
@@ -200,14 +204,14 @@ fn add_ip_to_routing_table(ip: &Ipv4Addr) {
         .unwrap();
 }
 
-fn remove_ip_from_routing_table(ip: &Ipv4Addr) {
-    let ip = ip.to_string();
-
-    Command::new("ip")
-        .args(["route", "del", &ip])
-        .spawn()
-        .expect("Fail to remove IP from routing table.");
-}
+// fn remove_ip_from_routing_table(ip: &Ipv4Addr) {
+//     let ip = ip.to_string();
+//
+//     Command::new("ip")
+//         .args(["route", "del", &ip])
+//         .spawn()
+//         .expect("Fail to remove IP from routing table.");
+// }
 
 fn send_attach_response(error: AttachError, stream: &TcpStream) {
     match serialize_to(&Message::AttachResponse { error }, stream) {
