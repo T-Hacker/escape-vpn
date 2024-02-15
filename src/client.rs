@@ -8,7 +8,7 @@ pub fn launch(command: &[String], delay: Duration) {
     let mut command = command.iter();
     let executable = command.next().expect("Executable name");
 
-    let output = Command::new(executable)
+    let mut output = Command::new(executable)
         .args(command)
         .spawn()
         .expect("Fail to launch process");
@@ -16,6 +16,8 @@ pub fn launch(command: &[String], delay: Duration) {
     let pid = output.id();
 
     attach(pid, delay);
+
+    output.wait().expect("Fail to wait for process");
 }
 
 pub fn attach(pid: u32, delay: Duration) {
@@ -54,6 +56,7 @@ pub fn detach_from_process(pid: u32) {
         Message::DetachResponse { error } => match error {
             DetachError::Ok => { /* Do nothing. */ }
             DetachError::ProcessNotFound => println!("Process not found!"),
+            DetachError::UnknownError => println!("Unknown error occured in service!"),
         },
 
         _ => panic!("Unexpected message received!"),

@@ -5,7 +5,7 @@ use crate::{
         Connection, ConnectionState,
     },
     get_service_address_file,
-    messages::{deserialize_from, serialize_to, AttachError, Message},
+    messages::{deserialize_from, serialize_to, AttachError, DetachError, Message},
     process_manager::{add_process, remove_process_and_trigger_exit},
 };
 use color_eyre::eyre::Result;
@@ -45,7 +45,7 @@ pub fn service(address: &str, pooling_rate: Duration) {
         // Decode request message.
         match deserialize_from::<Message, _>(&stream) {
             Ok(Message::AttachRequest { pid, delay }) => attach(pid, delay, pooling_rate, stream),
-            Ok(Message::DetachRequest { pid }) => detach(pid),
+            Ok(Message::DetachRequest { pid }) => detach(pid, stream),
 
             Ok(_) => {
                 log::error!("Invalid message received.");
@@ -78,14 +78,35 @@ fn attach(pid: u32, delay: u32, pooling_rate: Duration, stream: TcpStream) {
     }
 }
 
-fn detach(pid: u32) {
+fn detach(pid: u32, stream: TcpStream) {
     log::info!("Detaching from PID: {pid}...");
 
     match remove_process_and_trigger_exit(pid) {
-        Ok(true) => log::info!("Successfuly detach from process: {pid}"),
-        Ok(false) => log::warn!("Fail to detach from process: {pid}"),
+        Ok(true) => {
+            log::info!("Successfuly detach from process: {pid}");
 
-        Err(e) => log::error!("Fail to detach from process: {pid} with error: {e}"),
+            let msg = Message::DetachResponse {
+                error: DetachError::Ok,
+            };
+            serialize_to(&msg, &stream).expect("Fail to send message to client");
+        }
+        Ok(false) => {
+            log::warn!("Fail to detach from process: {pid}");
+
+            let msg = Message::DetachResponse {
+                error: DetachError::ProcessNotFound,
+            };
+            serialize_to(&msg, &stream).expect("Fail to send message to client");
+        }
+
+        Err(e) => {
+            log::error!("Fail to detach from process: {pid} with error: {e}");
+
+            let msg = Message::DetachResponse {
+                error: DetachError::UnknownError,
+            };
+            serialize_to(&msg, &stream).expect("Fail to send message to client");
+        }
     }
 }
 
@@ -96,6 +117,7 @@ fn track_process(
     stream: TcpStream,
     exit_receiver: Receiver<()>,
 ) {
+    let mut response_sent = false;
     loop {
         // Check if we should start cleaning up.
         match exit_receiver.try_recv() {
@@ -108,14 +130,20 @@ fn track_process(
         {
             let connections_pending = match get_ipv4_pending_connections_from_pid(pid) {
                 Ok(connections_pending) => {
-                    log::info!("Successfuly attached to process: {pid}");
-                    send_attach_response(AttachError::Ok, &stream);
+                    if !response_sent {
+                        log::info!("Successfuly attached to process: {pid}");
+                        send_attach_response(AttachError::Ok, &stream);
+
+                        response_sent = true;
+                    }
 
                     connections_pending
                 }
                 Err(e) => {
-                    log::error!("Unable to find pending connections: {e}");
-                    send_attach_response(AttachError::ProcessNotFound, &stream);
+                    if !response_sent {
+                        log::error!("Unable to find pending connections: {e}");
+                        send_attach_response(AttachError::ProcessNotFound, &stream);
+                    }
 
                     return;
                 }

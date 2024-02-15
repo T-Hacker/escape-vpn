@@ -20,6 +20,7 @@ pub enum AttachError {
 pub enum DetachError {
     Ok,
     ProcessNotFound,
+    UnknownError,
 }
 
 pub fn serialize_to<T, W>(value: &T, writer: W) -> Result<()>
