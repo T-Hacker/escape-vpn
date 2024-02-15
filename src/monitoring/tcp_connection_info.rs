@@ -23,10 +23,10 @@ impl TryFrom<&str> for TcpConnectionInfo {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         let mut columns = value.split_whitespace().skip(2); // Skip index and local address.
 
-        let column = columns.next().ok_or_else(|| ParseConnectionInfoError)?;
+        let column = columns.next().ok_or(ParseConnectionInfoError)?;
         let remote_address = parse_ipv4(column).map_err(|_| ParseConnectionInfoError)?;
 
-        let column = columns.next().ok_or_else(|| ParseConnectionInfoError)?;
+        let column = columns.next().ok_or(ParseConnectionInfoError)?;
         let status = u8::from_str_radix(column, 16)
             .map_err(|_| ParseConnectionInfoError)?
             .try_into()

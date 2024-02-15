@@ -1,11 +1,8 @@
 use crate::{
-    connections::{
-        get_connection_mananger,
-        tcp::{TcpConnectionInfo, TcpConnectionStatus},
-        Connection, ConnectionState,
-    },
+    connections::{get_connection_mananger, Connection, ConnectionState},
     get_service_address_file,
     messages::{deserialize_from, serialize_to, AttachError, DetachError, Message},
+    monitoring::{TcpConnectionInfo, TcpConnectionStatus},
     process_manager::{add_process, remove_process_and_trigger_exit},
 };
 use color_eyre::eyre::Result;
@@ -23,7 +20,7 @@ pub fn service(address: &str, pooling_rate: Duration) {
         "Registering service port in: {}",
         port_file_name.to_str().unwrap()
     );
-    let port = address.split(':').skip(1).next().unwrap();
+    let port = address.split(':').nth(1).unwrap();
     std::fs::write(&port_file_name, port).expect("Fail to register service port.");
 
     // Start listening for client connections.
@@ -246,8 +243,6 @@ fn send_attach_response(error: AttachError, stream: &TcpStream) {
         Ok(_) => { /* Do nothing. */ }
         Err(e) => {
             log::error!("Fail to send response to service: {e}");
-
-            return;
         }
     }
 }

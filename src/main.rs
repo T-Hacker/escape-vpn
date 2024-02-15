@@ -1,6 +1,7 @@
 mod client;
 mod connections;
 mod messages;
+mod monitoring;
 mod process_manager;
 mod service;
 

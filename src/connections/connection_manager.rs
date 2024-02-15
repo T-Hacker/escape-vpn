@@ -67,7 +67,5 @@ impl ConnectionManager {
 
 pub fn get_connection_mananger() -> Arc<Mutex<ConnectionManager>> {
     // TODO: Implement connection persistence.
-    CONNECTION_MANAGER
-        .get_or_init(|| Default::default())
-        .clone()
+    CONNECTION_MANAGER.get_or_init(Default::default).clone()
 }

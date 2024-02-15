@@ -11,7 +11,7 @@ type Processes = Arc<Mutex<HashMap<u32, (Cell<Option<JoinHandle<()>>>, Sender<()
 static PROCESSES: OnceLock<Processes> = OnceLock::new();
 
 pub fn add_process(pid: u32, join_handler: JoinHandle<()>, exit_sender: Sender<()>) -> Result<()> {
-    let processes = PROCESSES.get_or_init(|| Default::default());
+    let processes = PROCESSES.get_or_init(Default::default);
     let Ok(mut processes) = processes.lock() else {
         return Err(eyre!("Fail to lock processes collection."));
     };
@@ -22,7 +22,7 @@ pub fn add_process(pid: u32, join_handler: JoinHandle<()>, exit_sender: Sender<(
 }
 
 pub fn remove_process_and_trigger_exit(pid: u32) -> Result<bool> {
-    let processes = PROCESSES.get_or_init(|| Default::default());
+    let processes = PROCESSES.get_or_init(Default::default);
 
     let Ok(processes) = processes.lock() else {
         return Err(eyre!("Fail to lock processes collection."));

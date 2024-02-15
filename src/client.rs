@@ -67,7 +67,7 @@ fn connect_to_service() -> TcpStream {
     // Find port of the service to connect to.
     let port_file_name = get_service_address_file();
     let port = std::fs::read_to_string(port_file_name).unwrap();
-    let port = u16::from_str_radix(&port, 10).unwrap();
+    let port = port.parse::<u16>().unwrap();
     let service_address = format!("127.0.0.1:{port}");
 
     // Connect to service.
