@@ -14,7 +14,6 @@ pub fn launch(command: &[String], delay: Duration) {
         .expect("Fail to launch process");
 
     let pid = output.id();
-
     attach(pid, delay);
 
     output.wait().expect("Fail to wait for process");
@@ -34,7 +33,7 @@ pub fn attach(pid: u32, delay: Duration) {
     // Receive response from service.
     match deserialize_from::<Message, _>(stream).expect("Fail to read response message") {
         Message::AttachResponse { error } => match error {
-            AttachError::Ok => { /* Do nothing. */ }
+            AttachError::Ok => println!("Successfuly attached to process: {pid}"),
             AttachError::ProcessNotFound => println!("Process not found."),
         },
 
