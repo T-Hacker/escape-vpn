@@ -38,6 +38,10 @@ pub fn service(address: &str, pooling_rate: Duration) {
                 continue;
             }
         };
+        match stream.set_nodelay(true) {
+            Ok(_) => { /* Do nothing. */ }
+            Err(e) => log::error!("Fail to set nodelay: {e}"),
+        }
 
         // Decode request message.
         match deserialize_from::<Message, _>(&stream) {
