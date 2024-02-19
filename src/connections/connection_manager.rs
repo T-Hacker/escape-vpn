@@ -91,8 +91,8 @@ pub fn get_connection_mananger() -> Arc<Mutex<ConnectionManager>> {
             let start_time = Instant::now();
 
             let connection_file = get_connection_file_path();
-            let connections = std::fs::read_to_string(connection_file).unwrap_or_default();
-            let connections = connections
+            let connections = std::fs::read_to_string(&connection_file).unwrap_or_default();
+            let connections: Vec<_> = connections
                 .split_whitespace()
                 .filter_map(|line| {
                     let Ok(address) = Ipv4Addr::from_str(line) else {
@@ -105,6 +105,11 @@ pub fn get_connection_mananger() -> Arc<Mutex<ConnectionManager>> {
                     ))
                 })
                 .collect();
+            log::info!(
+                "Loaded {} addresses from: {}",
+                connections.len(),
+                connection_file.to_string_lossy()
+            );
 
             Arc::new(Mutex::new(ConnectionManager { connections }))
         })
@@ -112,11 +117,8 @@ pub fn get_connection_mananger() -> Arc<Mutex<ConnectionManager>> {
 }
 
 fn get_connection_file_path() -> PathBuf {
-    let path = std::env::temp_dir()
-        .join(env!("CARGO_PKG_NAME"))
-        .join("connections.txt");
-
+    let path = std::env::temp_dir().join(env!("CARGO_PKG_NAME"));
     std::fs::create_dir_all(&path).unwrap_or_default();
 
-    path
+    path.join("connections.txt")
 }
