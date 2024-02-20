@@ -62,6 +62,21 @@ pub fn detach_from_process(pid: u32) {
     }
 }
 
+pub fn purge() {
+    let mut stream = connect_to_service();
+
+    // Send message to service.
+    let msg = Message::PurgeRequest;
+    serialize_to(&msg, &stream).expect("Fail to send message to service");
+    stream.flush().expect("Fail to flush pipe");
+
+    // Receive response from service.
+    let msg: Message = deserialize_from(stream).expect("Fail to read response message");
+    if msg != Message::PurgeResponse {
+        println!("Fail to purge connections!");
+    }
+}
+
 fn connect_to_service() -> TcpStream {
     // Find port of the service to connect to.
     let port_file_name = get_service_address_file();

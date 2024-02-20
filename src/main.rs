@@ -6,7 +6,7 @@ mod process_manager;
 mod service;
 
 use clap::{Parser, Subcommand};
-use client::{attach, detach_from_process, launch};
+use client::{attach, detach_from_process, launch, purge};
 use service::service;
 use simple_logger::SimpleLogger;
 use std::{path::PathBuf, time::Duration};
@@ -54,6 +54,9 @@ enum Commands {
         pid: u32,
     },
 
+    #[command(about = "Remove all connections from the routing table and caching.")]
+    Purge,
+
     #[command(about = "Launch application as a service")]
     Service {
         #[arg(default_value = "127.0.0.1:3131", help = "Listening port.")]
@@ -88,6 +91,8 @@ fn main() {
             attach(pid, delay);
         }
         Commands::Detach { pid } => detach_from_process(pid),
+        Commands::Purge => purge(),
+
         Commands::Service {
             address,
             pooling_rate,

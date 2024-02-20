@@ -1,22 +1,25 @@
 use color_eyre::eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq)]
 pub enum Message {
     AttachRequest { pid: u32, delay: u32 },
     AttachResponse { error: AttachError },
 
     DetachRequest { pid: u32 },
     DetachResponse { error: DetachError },
+
+    PurgeRequest,
+    PurgeResponse,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
 pub enum AttachError {
     Ok,
     ProcessNotFound,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
 pub enum DetachError {
     Ok,
     ProcessNotFound,

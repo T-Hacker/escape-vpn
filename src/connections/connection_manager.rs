@@ -80,6 +80,17 @@ impl ConnectionManager {
         self.connections.get_mut(index)
     }
 
+    pub fn purge(&mut self) {
+        self.connections.clear();
+
+        let connection_file = get_connection_file_path();
+        std::fs::remove_file(connection_file).unwrap_or_default();
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, Connection> {
+        self.connections.iter()
+    }
+
     pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, Connection> {
         self.connections.iter_mut()
     }

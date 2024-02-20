@@ -47,6 +47,7 @@ pub fn service(address: &str, pooling_rate: Duration) {
         match deserialize_from::<Message, _>(&stream) {
             Ok(Message::AttachRequest { pid, delay }) => attach(pid, delay, pooling_rate, stream),
             Ok(Message::DetachRequest { pid }) => detach(pid, stream),
+            Ok(Message::PurgeRequest) => purge(stream),
 
             Ok(_) => {
                 log::error!("Invalid message received.");
@@ -109,6 +110,27 @@ fn detach(pid: u32, stream: TcpStream) {
             serialize_to(&msg, &stream).expect("Fail to send message to client");
         }
     }
+}
+
+fn purge(stream: TcpStream) {
+    log::info!("Purging connections...");
+
+    let connection_manager = get_connection_mananger();
+    let Ok(mut connection_manager) = connection_manager.lock() else {
+        log::error!("Fail to lock connection manager.");
+
+        return;
+    };
+
+    for connection in connection_manager.iter() {
+        remove_ip_from_routing_table(connection.address());
+    }
+
+    connection_manager.purge();
+
+    // Send response to client.
+    let msg = Message::PurgeResponse;
+    serialize_to(&msg, &stream).expect("Fail to send message to client");
 }
 
 fn track_process(
@@ -233,14 +255,14 @@ fn add_ip_to_routing_table(ip: &Ipv4Addr) {
         .unwrap();
 }
 
-// fn remove_ip_from_routing_table(ip: &Ipv4Addr) {
-//     let ip = ip.to_string();
-//
-//     Command::new("ip")
-//         .args(["route", "del", &ip])
-//         .spawn()
-//         .expect("Fail to remove IP from routing table.");
-// }
+fn remove_ip_from_routing_table(ip: &Ipv4Addr) {
+    let ip = ip.to_string();
+
+    Command::new("ip")
+        .args(["route", "del", &ip])
+        .spawn()
+        .expect("Fail to remove IP from routing table.");
+}
 
 fn send_attach_response(error: AttachError, stream: &TcpStream) {
     match serialize_to(&Message::AttachResponse { error }, stream) {
