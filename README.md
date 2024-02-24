@@ -1,4 +1,6 @@
-Application that automatically adds to the routing table TCP connections that are blocked by the VPN. 
+Application that automatically adds to the routing table TCP connections that are blocked by the VPN.
+
+***Note:*** Try more advanced techniques (like _net_cls_) before using this hacky solution.
 
 ## Usage
 
