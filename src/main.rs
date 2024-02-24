@@ -62,6 +62,9 @@ enum Commands {
         #[arg(default_value = "127.0.0.1:3131", help = "Listening port.")]
         address: String,
 
+        #[arg(default_value = "192.168.1.1", help = "Gateway IP address.")]
+        gateway: String,
+
         #[arg(
             short,
             long,
@@ -95,11 +98,12 @@ fn main() {
 
         Commands::Service {
             address,
+            gateway,
             pooling_rate,
         } => {
             let pooling_rate = Duration::from_millis(pooling_rate as u64);
 
-            service(&address, pooling_rate);
+            service(&address, &gateway, pooling_rate);
         }
     }
 }

@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub fn service(address: &str, pooling_rate: Duration) {
+pub fn service(address: &str, gateway: &str, pooling_rate: Duration) {
     // Register service port.
     let port_file_name = get_service_address_file();
     log::info!(
@@ -45,7 +45,9 @@ pub fn service(address: &str, pooling_rate: Duration) {
 
         // Decode request message.
         match deserialize_from::<Message, _>(&stream) {
-            Ok(Message::AttachRequest { pid, delay }) => attach(pid, delay, pooling_rate, stream),
+            Ok(Message::AttachRequest { pid, delay }) => {
+                attach(pid, delay, pooling_rate, gateway.to_owned(), stream)
+            }
             Ok(Message::DetachRequest { pid }) => detach(pid, stream),
             Ok(Message::PurgeRequest) => purge(stream),
 
@@ -64,7 +66,7 @@ pub fn service(address: &str, pooling_rate: Duration) {
     }
 }
 
-fn attach(pid: u32, delay: u32, pooling_rate: Duration, stream: TcpStream) {
+fn attach(pid: u32, delay: u32, pooling_rate: Duration, gateway: String, stream: TcpStream) {
     log::info!("Attaching to PID: {} with delay of {} ms...", pid, delay);
 
     let (sender, receiver) = channel();
@@ -72,7 +74,7 @@ fn attach(pid: u32, delay: u32, pooling_rate: Duration, stream: TcpStream) {
     let join_handle = std::thread::spawn(move || {
         let delay = Duration::from_millis(delay as u64);
 
-        track_process(pid, delay, pooling_rate, stream, receiver);
+        track_process(pid, delay, pooling_rate, &gateway, stream, receiver);
     });
 
     if add_process(pid, join_handle, sender).is_err() {
@@ -137,6 +139,7 @@ fn track_process(
     pid: u32,
     delay: Duration,
     pooling_rate: Duration,
+    gateway: &str,
     stream: TcpStream,
     exit_receiver: Receiver<()>,
 ) {
@@ -202,7 +205,7 @@ fn track_process(
                                 continue;
                             }
 
-                            add_ip_to_routing_table(connection.address());
+                            add_ip_to_routing_table(connection.address(), gateway);
                             log::info!("Address {} added to routing table.", connection.address());
 
                             connection.set_state(ConnectionState::InRoutingTable);
@@ -248,9 +251,9 @@ fn get_ipv4_connection_info_from_pid(pid: u32) -> Result<Vec<TcpConnectionInfo>>
     Ok(connections)
 }
 
-fn add_ip_to_routing_table(ip: &Ipv4Addr) {
+fn add_ip_to_routing_table(ip: &Ipv4Addr, gateway: &str) {
     Command::new("ip")
-        .args(["route", "add", &format!("{}/32", ip), "via", "192.168.1.1"])
+        .args(["route", "add", &format!("{}/32", ip), "via", gateway])
         .spawn()
         .unwrap();
 }
